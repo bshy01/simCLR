@@ -1,0 +1,18 @@
+# macOS 관련
+.DS_Store
+
+# 파이썬/가상환경
+venv/
+.venv/
+__pycache__/
+
+# 딥러닝/SimCLR 관련 (용량 큰 파일들)
+data/
+dataset/
+checkpoint/
+runs/
+*.pth
+*.pt
+
+# PyCharm 설정
+.idea/
