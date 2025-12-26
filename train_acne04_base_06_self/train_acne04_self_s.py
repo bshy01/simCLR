@@ -269,32 +269,46 @@ if __name__ == '__main__':
     scheduler_ssl = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_ssl, T_max=num_epochs_ssl)
     writer_ssl = SummaryWriter(log_dir=f'logs/{str_save}/ssl')
 
-    simclr.train()
-    for epoch in range(num_epochs_ssl):
-        losses = []
-        for (x1, x2, _) in tqdm(tr_ssl_loader, desc=f'[SSL] Epoch {epoch+1}/{num_epochs_ssl}'):
-            x1 = x1.to(device, non_blocking=True)
-            x2 = x2.to(device, non_blocking=True)
+    # =========================
+    # [수정] SimCLR 사전학습 건너뛰고, 저장된 모델 로드
+    # =========================
+    # 아래 경로를 사전학습된 모델 파일 경로로 수정해주세요.
+    pretrained_model_path = os.path.join(path_save, f'simclr_resnet50_epoch{num_epochs_ssl}.pth')
+    if os.path.exists(pretrained_model_path):
+        print(f'Loading pretrained model from: {pretrained_model_path}')
+        simclr.load_state_dict(torch.load(pretrained_model_path, map_location=device))
+    else:
+        print(f'Pretrained model not found at: {pretrained_model_path}')
+        print('Please check the path to the pretrained model.')
+        exit() # 모델이 없으면 종료
 
-            z1 = simclr(x1)
-            z2 = simclr(x2)
-            loss = simclr_nt_xent(z1, z2, temperature=temperature)
-
-            optimizer_ssl.zero_grad()
-            loss.backward()
-            optimizer_ssl.step()
-            losses.append(loss.item())
-
-        scheduler_ssl.step()
-        avg_loss = float(np.mean(losses))
-        print(f'[SSL] epoch {epoch:03d} | loss {avg_loss:.4f} | lr {optimizer_ssl.param_groups[0]["lr"]:.6f}')
-        writer_ssl.add_scalar('loss', avg_loss, epoch)
-
-        # 주기적으로 백본 가중치 저장 (projection head 제외하고 저장할 수도 있음)
-        if (epoch+1) % 50 == 0 or epoch+1 == num_epochs_ssl:
-            torch.save(simclr.state_dict(), os.path.join(path_save, f'simclr_resnet50_epoch{epoch+1}.pth'))
-
-    writer_ssl.flush()
+    # # 기존 사전학습 코드 주석 처리
+    # simclr.train()
+    # for epoch in range(num_epochs_ssl):
+    #     losses = []
+    #     for (x1, x2, _) in tqdm(tr_ssl_loader, desc=f'[SSL] Epoch {epoch+1}/{num_epochs_ssl}'):
+    #         x1 = x1.to(device, non_blocking=True)
+    #         x2 = x2.to(device, non_blocking=True)
+    #
+    #         z1 = simclr(x1)
+    #         z2 = simclr(x2)
+    #         loss = simclr_nt_xent(z1, z2, temperature=temperature)
+    #
+    #         optimizer_ssl.zero_grad()
+    #         loss.backward()
+    #         optimizer_ssl.step()
+    #         losses.append(loss.item())
+    #
+    #     scheduler_ssl.step()
+    #     avg_loss = float(np.mean(losses))
+    #     print(f'[SSL] epoch {epoch:03d} | loss {avg_loss:.4f} | lr {optimizer_ssl.param_groups[0]["lr"]:.6f}')
+    #     writer_ssl.add_scalar('loss', avg_loss, epoch)
+    #
+    #     # 주기적으로 백본 가중치 저장 (projection head 제외하고 저장할 수도 있음)
+    #     if (epoch+1) % 50 == 0 or epoch+1 == num_epochs_ssl:
+    #         torch.save(simclr.state_dict(), os.path.join(path_save, f'simclr_resnet50_epoch{epoch+1}.pth'))
+    #
+    # writer_ssl.flush()
     # 사전학습 완료 후, 백본 가중치만 추출
     # simclr.encoder → resnet50 backbone, simclr.proj → projection head
     # 체크포인트로부터 선형평가에 사용할 백본 파라미터를 복사
