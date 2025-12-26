@@ -199,6 +199,7 @@ def train_simclr(
     backbone: str = "resnet50",
     epochs: int = 200,
     batch_size: int = 64,
+    accumulation_steps: int = 1,
     lr: float = 3e-4,
     temperature: float = 0.1,
     img_h: int = 224,
@@ -255,25 +256,28 @@ def train_simclr(
     for epoch in range(epochs):
         model.train()
         loss_m = []
+        optimizer.zero_grad()
 
-        pbar = tqdm(tr_loader, desc=f"[Epoch {epoch+1}/{epochs}]")
-        for x in pbar:
-            # t0 = time.perf_counter()
+        pbar = tqdm(enumerate(tr_loader), desc=f"[Epoch {epoch+1}/{epochs}]", total=len(tr_loader))
+        for i, x in pbar:
             x = x.to(device, non_blocking=True)      # (2B, C, H, W)
-            # t1 = time.perf_counter()
 
             _, z = model(x)                          # (2B, D)
             loss = info_nce_loss(z, temperature=temperature)
 
-            optimizer.zero_grad()
+            if accumulation_steps > 1:
+                loss = loss / accumulation_steps
+
             loss.backward()
-            optimizer.step()
-            # t2 = time.perf_counter()
-            # data_time = (t1 - t0)
-            # gpu_time = (t2 - t1)
-            # pbar.set_postfix(dt=f"{data_time * 1000:.1f}ms", gt=f"{gpu_time * 1000:.1f}ms", loss=f"{loss.item():.4f}")
+
+            if (i + 1) % accumulation_steps == 0 or (i + 1) == len(tr_loader):
+                optimizer.step()
+                optimizer.zero_grad()
 
             lv = loss.item()
+            if accumulation_steps > 1:
+                lv = lv * accumulation_steps
+
             loss_m.append(lv)
             writer.add_scalar("train/loss", lv, global_step)
             writer.add_scalar("train/lr", optimizer.param_groups[0]['lr'], global_step)
@@ -327,7 +331,8 @@ if __name__ == "__main__":
         log_dir="logs_simclr/Acne04",
         backbone="resnet50",       # resnet18/34/50/101 가능
         epochs=50,
-        batch_size=16,
+        batch_size=128,             # RTX 4090에서 시도해볼만한 배치
+        accumulation_steps=8,      # 128 * 8 = 1024 effective batch size
         lr=3e-4,
         temperature=0.1,
         img_h=224,
