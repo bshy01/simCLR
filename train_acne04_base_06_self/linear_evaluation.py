@@ -120,11 +120,11 @@ def remap_resnet_keys(state_dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Linear Evaluation of a Pre-trained SimCLR model')
+    parser = argparse.ArgumentParser(description='Linear Evaluation of a Pre-trained SimCLR model based on the original paper protocol.')
     parser.add_argument('--model_path', type=str, default='train_acne04_base_06_self/simclr_pretrain_only/best.pth', help='Path to the pretrained SimCLR model')
-    parser.add_argument('--num_epochs_lin', type=int, default=50, help='Epochs for linear evaluation')
+    parser.add_argument('--num_epochs_lin', type=int, default=90, help='Epochs for linear evaluation (SimCLR default: 90)')
     parser.add_argument('--val_batch_size', type=int, default=16, help='Batch size for evaluation')
-    parser.add_argument('--learning_rate_lin', type=float, default=1e-3, help='Learning rate for linear eval')
+    parser.add_argument('--learning_rate_lin', type=float, default=0.1, help='Learning rate for linear eval (SGD)')
     parser.add_argument('--num_class', type=int, default=200, help='Number of classes for linear evaluation')
     parser.add_argument('--len_h', type=int, default=224, help='Image height')
     parser.add_argument('--len_w', type=int, default=224, help='Image width')
@@ -141,17 +141,28 @@ def main():
         print('Count of using GPUs:', torch.cuda.device_count())
 
     # =========================
-    # Data Augmentation and Loaders
+    # Data Augmentation and Loaders (SimCLR Protocol)
     # =========================
-    eval_aug = A.Compose([
-        A.Resize(height=args.len_h, width=args.len_w),
+    # Augmentation for training the linear classifier
+    train_aug = A.Compose([
+        A.RandomResizedCrop(height=args.len_h, width=args.len_w),
+        A.HorizontalFlip(p=0.5),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ToTensorV2()
     ])
+
+    # Augmentation for evaluating the linear classifier
+    test_aug = A.Compose([
+        A.Resize(height=args.len_h, width=args.len_w),
+        A.CenterCrop(height=args.len_h, width=args.len_w),
+        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ToTensorV2()
+    ])
+
     base_tr = DatasetAcne04Class(path_src=args.path_tr_src, transforms=None, color=cv2.IMREAD_COLOR)
     base_te = DatasetAcne04Class(path_src=args.path_te_src, transforms=None, color=cv2.IMREAD_COLOR)
-    tr_eval_dataset = EvalWrapper(base_tr, eval_aug)
-    te_eval_dataset = EvalWrapper(base_te, eval_aug)
+    tr_eval_dataset = EvalWrapper(base_tr, train_aug)
+    te_eval_dataset = EvalWrapper(base_te, test_aug)
     tr_eval_loader = torch.utils.data.DataLoader(tr_eval_dataset, batch_size=args.val_batch_size, shuffle=True, num_workers=0, pin_memory=True)
     te_eval_loader = torch.utils.data.DataLoader(te_eval_dataset, batch_size=args.val_batch_size, shuffle=False, num_workers=0, pin_memory=True)
 
@@ -190,7 +201,7 @@ def main():
     print("Pretrained model loaded successfully.")
 
     # =========================
-    # Linear Evaluation
+    # Linear Evaluation (SimCLR Protocol)
     # =========================
     # The feature dimension is the input to the projection head.
     feat_dim = pretrained_model.proj[0].in_features
@@ -198,7 +209,8 @@ def main():
     backbone = FrozenBackbone(pretrained_model.encoder).to(device)
     classifier = LinearClassifier(in_dim=feat_dim, num_class=args.num_class).to(device)
     criterion_ce = nn.CrossEntropyLoss()
-    optimizer_lin = torch.optim.Adam(classifier.parameters(), weight_decay=5e-4, lr=args.learning_rate_lin)
+    # SimCLR paper uses LARS, but SGD with momentum is a common alternative for linear evaluation.
+    optimizer_lin = torch.optim.SGD(classifier.parameters(), momentum=0.9, weight_decay=5e-4, lr=args.learning_rate_lin)
     scheduler_lin = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_lin, T_max=args.num_epochs_lin)
 
     writer_tr = SummaryWriter(log_dir=f'logs/{args.str_save}/linear_train')
