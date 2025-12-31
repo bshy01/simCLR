@@ -98,27 +98,6 @@ def to_hwc_rgb_uint8(img):
             img = img.round().astype(np.uint8)
     return img
 
-def remap_resnet_keys(state_dict):
-    """Remaps torchvision resnet keys to sequential model keys."""
-    new_state_dict = {}
-    for k, v in state_dict.items():
-        new_k = k
-        if k.startswith('conv1'):
-            new_k = k.replace('conv1', '0', 1)
-        elif k.startswith('bn1'):
-            new_k = k.replace('bn1', '1', 1)
-        elif k.startswith('layer1'):
-            new_k = k.replace('layer1', '4', 1)
-        elif k.startswith('layer2'):
-            new_k = k.replace('layer2', '5', 1)
-        elif k.startswith('layer3'):
-            new_k = k.replace('layer3', '6', 1)
-        elif k.startswith('layer4'):
-            new_k = k.replace('layer4', '7', 1)
-        new_state_dict[new_k] = v
-    return new_state_dict
-
-
 def main():
     parser = argparse.ArgumentParser(description='Linear Evaluation of a Pre-trained SimCLR model based on the original paper protocol.')
     parser.add_argument('--model_path', type=str, default='train_acne04_base_06_self/simclr_pretrain_only/best.pth', help='Path to the pretrained SimCLR model')
@@ -184,19 +163,13 @@ def main():
     if 'state_dict' in ckpt:
         ckpt = ckpt['state_dict']
 
-    # Prepare encoder state dict
-    encoder_state_dict = ckpt
+    # If keys start with 'encoder.', we can load them directly into the encoder
     if any(k.startswith('encoder.') for k in ckpt.keys()):
+         # We can filter the state_dict to only load the encoder weights
         encoder_state_dict = {k.replace('encoder.', ''): v for k, v in ckpt.items() if k.startswith('encoder.')}
-    elif any(k.startswith('module.encoder.') for k in ckpt.keys()): # Handle DataParallel
-        encoder_state_dict = {k.replace('module.encoder.', ''): v for k, v in ckpt.items() if k.startswith('module.encoder.')}
-
-    try:
-        pretrained_model.encoder.load_state_dict(encoder_state_dict, strict=True)
-    except RuntimeError as e:
-        print("Failed to load encoder state_dict directly. Attempting to remap keys for Sequential model.")
-        remapped_state_dict = remap_resnet_keys(encoder_state_dict)
-        pretrained_model.encoder.load_state_dict(remapped_state_dict, strict=True)
+        pretrained_model.encoder.load_state_dict(encoder_state_dict)
+    else: # Assuming the saved model is the whole SimCLRWrapper
+        pretrained_model.load_state_dict(ckpt)
 
     print("Pretrained model loaded successfully.")
 
